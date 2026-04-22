@@ -1,0 +1,27 @@
+# Runtime defaults for mkt-007-uplift-campaign-targeting.
+seed: 42
+output_dir: outputs
+simulation:
+  n_customers: 6000
+  treatment_rate: 0.5
+  test_size: 0.35
+  top_customer_count: 120
+  target_share_grid:
+    - 0.10
+    - 0.20
+    - 0.30
+    - 0.40
+    - 0.50
+  contact_cost: 1.8
+  conversion_value: 30.0
+  logistic_max_iter: 400
+smoke_test:
+  n_customers: 1400
+  top_customer_count: 40
+outputs:
+  data_file: data/simulated_customers.csv
+  summary_file: outputs/summary.txt
+  smoke_file: outputs/smoke_test.txt
+  uplift_ranking_file: outputs/uplift_ranking.csv
+  roi_comparison_file: outputs/roi_comparison.csv
+  top_customers_file: outputs/top_customers.csv

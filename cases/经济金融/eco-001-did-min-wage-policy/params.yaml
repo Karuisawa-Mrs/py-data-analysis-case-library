@@ -1,0 +1,37 @@
+# Runtime defaults for eco-001-did-min-wage-policy.
+seed: 20260422
+output_dir: outputs
+simulation:
+  n_treated_firms: 90
+  n_control_firms: 90
+  n_periods: 6
+  policy_start: 3
+  placebo_start: 2
+  employment_intercept: 58.0
+  firm_fe_sd: 4.5
+  time_linear: 0.8
+  time_quadratic: -0.03
+  base_wage: 13.5
+  base_wage_sd: 0.8
+  wage_trend: 0.35
+  wage_policy_bump: 1.15
+  wage_noise_sd: 0.35
+  base_productivity: 1.0
+  productivity_sd: 0.2
+  productivity_trend: 0.04
+  productivity_noise_sd: 0.08
+  demand_level: 100.0
+  demand_noise_sd: 2.5
+  productivity_coef: 5.2
+  wage_coef: 2.1
+  demand_coef: 0.12
+  policy_effect: -2.8
+  employment_noise_sd: 1.2
+outputs:
+  data_file: data/simulated_panel.csv
+  summary_file: outputs/summary.txt
+  smoke_file: outputs/smoke_test.txt
+  trends_figure: outputs/parallel_trends.png
+  did_table: outputs/did_results.csv
+  placebo_table: outputs/placebo_results.csv
+  group_means_table: outputs/group_means.csv

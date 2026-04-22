@@ -1,0 +1,10 @@
+analysis_year_start: 2019
+analysis_year_end: 2025
+seed: 42
+moran_permutations: 999
+lisa_alpha: 0.10
+sdm_method: ord
+smoke_test:
+  moran_permutations: 99
+  lisa_alpha: 0.10
+  sdm_method: ord

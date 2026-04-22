@@ -1,0 +1,13 @@
+seed: 42
+observation_end_date: "2025-12-31"
+observation_days: 365
+n_customers: 720
+min_orders_per_customer: 1
+max_orders_per_customer: 30
+min_k: 2
+max_k: 6
+n_init: 20
+
+smoke_test:
+  n_customers: 160
+  max_orders_per_customer: 20

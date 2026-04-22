@@ -1,0 +1,30 @@
+# Python build and cache artifacts
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Obsidian and Windows workspace noise
+.obsidian/workspace.json
+.obsidian/cache/
+Thumbs.db
+Desktop.ini
+
+# Case outputs: keep README.md, ignore generated artifacts
+**/outputs/*
+!**/outputs/README.md
+
+# Large CSV guidance:
+# Do not commit oversized raw CSV files (>25MB); small example CSVs may stay tracked when intentional.
+
+# Large raw data files (>25MB threshold)
+*.csv.gz
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.zip
+*.tar.gz

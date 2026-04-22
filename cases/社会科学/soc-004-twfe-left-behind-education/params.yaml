@@ -1,0 +1,18 @@
+seed: 20260422
+output_dir: outputs
+simulation:
+  start_year: 2018
+  n_years_full: 6
+  n_years_smoke: 4
+  n_students_full: 480
+  n_students_smoke: 120
+  min_baseline_age: 8
+  max_baseline_age: 13
+  true_effect_left_behind: -2.8
+  younger_penalty: -1.2
+  inland_penalty: -0.9
+  left_behind_threshold: 0.52
+  region_shares:
+    east: 0.34
+    central: 0.36
+    west: 0.30

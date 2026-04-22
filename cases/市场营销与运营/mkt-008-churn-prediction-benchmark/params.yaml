@@ -1,0 +1,15 @@
+# Runtime parameters for analysis.py.
+# Metadata semantics remain authoritative in index.md frontmatter.
+seed: 42
+output_dir: outputs
+sample_size: 3200
+smoke_test_sample_size: 480
+test_size: 0.3
+positive_class_floor: 0.12
+positive_class_ceiling: 0.38
+logistic_max_iter: 3000
+gradient_boosting_estimators: 220
+gradient_boosting_learning_rate: 0.05
+gradient_boosting_max_depth: 3
+gradient_boosting_subsample: 0.9
+top_feature_count: 12

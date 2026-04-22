@@ -1,0 +1,101 @@
+{
+  "active_plan": "D:\\tool\\Obsidian\\Storage\\Karuisawa小屋\\数据分析案例库\\.sisyphus\\plans\\py-data-analysis-case-library.md",
+  "started_at": "2026-04-22T15:12:14.736Z",
+  "session_ids": [
+    "ses_24a657c34ffeC0h9DXJdDtXXOj",
+    "ses_249d671a3ffeAOns6Fhe4jnDW0",
+    "ses_249d6345bffeECHRj4KZGkyd8L",
+    "ses_249d5f8feffeZwFDqQel5nO64L",
+    "ses_249d5b0c2ffe6tk73i7HWkzhze",
+    "ses_249c24b39ffelFUQnjgI1cOS8b",
+    "ses_249c231f1ffegcJPzfErYIt0g2",
+    "ses_249c20fe7ffewzhBculZq2XXGz",
+    "ses_249c1e1a2ffetTh1v9VeG9VoRD",
+    "ses_249ae5e04ffenM9TuesFY7SRCF",
+    "ses_249ae2647ffeAmqr63TBPkQQIf",
+    "ses_249ade24dffefaExOgJJN06imr",
+    "ses_249ada369ffeQyYMH6aGZM6jca"
+  ],
+  "session_origins": {
+    "ses_24a657c34ffeC0h9DXJdDtXXOj": "direct",
+    "ses_249d671a3ffeAOns6Fhe4jnDW0": "appended",
+    "ses_249d6345bffeECHRj4KZGkyd8L": "appended",
+    "ses_249d5f8feffeZwFDqQel5nO64L": "appended",
+    "ses_249d5b0c2ffe6tk73i7HWkzhze": "appended",
+    "ses_249c24b39ffelFUQnjgI1cOS8b": "appended",
+    "ses_249c231f1ffegcJPzfErYIt0g2": "appended",
+    "ses_249c20fe7ffewzhBculZq2XXGz": "appended",
+    "ses_249c1e1a2ffetTh1v9VeG9VoRD": "appended",
+    "ses_249ae5e04ffenM9TuesFY7SRCF": "appended",
+    "ses_249ae2647ffeAmqr63TBPkQQIf": "appended",
+    "ses_249ade24dffefaExOgJJN06imr": "appended",
+    "ses_249ada369ffeQyYMH6aGZM6jca": "appended"
+  },
+  "plan_name": "py-data-analysis-case-library",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "搭建根目录分类轴与命名约束",
+      "session_id": "ses_24a3da7a3ffeTdoNiQeISQDd2v",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-22T15:17:49.674Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "建立 Python 依赖与仓库忽略策略",
+      "session_id": "ses_24a396ef2ffeaTtCxDKN4iolQI",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-04-22T15:22:22.855Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "实现批量校验、smoke run 与 notebook 同步检查脚本",
+      "session_id": "ses_24a33e020ffepP3zT17e4yESCF",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-22T15:33:45.513Z"
+    },
+    "todo:6": {
+      "task_key": "todo:6",
+      "task_label": "6",
+      "task_title": "落地经济金融案例一：最低工资政策的就业效应（DID）",
+      "session_id": "ses_24a2b4a2dffeU6UbyLH2tNH6Hk",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-22T15:44:37.179Z"
+    },
+    "todo:11": {
+      "task_key": "todo:11",
+      "task_label": "11",
+      "task_title": "落地社会科学案例三：社会资本与主观幸福感（SEM）",
+      "session_id": "ses_249fce92dffeTH6cvg7DGf7Seq",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-22T16:37:27.673Z"
+    },
+    "todo:15": {
+      "task_key": "todo:15",
+      "task_label": "15",
+      "task_title": "完成首批 9 案的批次级文献总表与跨案例一致性收口",
+      "session_id": "ses_249efd910ffeFDXiTWzoeRa6pD",
+      "agent": "Sisyphus-Junior",
+      "category": "writing",
+      "updated_at": "2026-04-22T16:46:18.502Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "Plan Compliance Audit — oracle",
+      "session_id": "ses_249ada369ffeQyYMH6aGZM6jca",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-22T17:52:24.348Z"
+    }
+  }
+}

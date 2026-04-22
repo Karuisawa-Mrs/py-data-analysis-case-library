@@ -1,0 +1,16 @@
+seed: 20260422
+output_dir: outputs
+date_start: "2000Q1"
+n_periods: 160
+burn_in: 40
+maxlags: 6
+lag_selection_ic: aic
+irf_horizon: 12
+fevd_horizon: 12
+shock_variable: M2
+smoke_test_overrides:
+  n_periods: 100
+  burn_in: 20
+  maxlags: 4
+  irf_horizon: 8
+  fevd_horizon: 8

@@ -1,0 +1,21 @@
+seed: 42
+output_dir: outputs
+sample_size_full: 720
+sample_size_smoke: 240
+bootstrap_reps_full: 160
+bootstrap_reps_smoke: 40
+bootstrap_attempt_multiplier: 4
+social_capital_sd: 1.0
+social_capital_to_trust: 0.72
+social_capital_to_swb: 0.28
+trust_to_swb: 0.54
+trust_noise_sd: 0.72
+swb_noise_sd: 0.78
+loadings:
+  social_capital: [1.0, 0.92, 0.86]
+  social_trust: [1.0, 0.94, 0.88]
+  swb: [1.0, 0.96, 0.90, 0.84]
+measurement_error_sd:
+  social_capital: 0.38
+  social_trust: 0.40
+  swb: 0.45

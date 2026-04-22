@@ -1,0 +1,5 @@
+# Runtime parameters for analysis.py.
+# Keep metadata semantics authoritative in index.md frontmatter;
+# this file only carries execution-facing defaults used by the script.
+seed: 42
+output_dir: outputs
