@@ -18,6 +18,10 @@
 | `eco-001-did-min-wage-policy` | DID | simulated | Medium-High | draft |
 | `eco-002-var-monetary-transmission` | VAR, IRF, FEVD | simulated | Medium | ready |
 | `eco-003-spatial-county-convergence` | Moran's I, SDM, LISA | real | Medium | draft |
+| `eco-010-credit-risk-ml-benchmark` | Logistic Regression, Gradient Boosting, Calibration | simulated | Medium | draft |
+| `eco-011-event-study-policy-announcements` | Event Study, Abnormal Returns, CAR | simulated | Medium | draft |
+| `eco-012-volatility-forecast-garch-tft` | GARCH, EGARCH, Temporal Fusion Transformer | simulated | High | draft |
+| `eco-013-double-ml-policy-heterogeneity` | Double Machine Learning, Causal Forest, CATE | simulated | High | draft |
 
 ---
 
@@ -28,6 +32,10 @@
 | `soc-004-twfe-left-behind-education` | TWFE, Panel Regression | simulated | Medium-High | complete |
 | `soc-005-cox-health-inequality` | Survival Analysis, Cox, Kaplan-Meier | simulated | Medium | draft |
 | `soc-006-sem-social-capital-wellbeing` | SEM, CFA, Mediation | simulated | Medium-High | complete |
+| `soc-014-bertopic-policy-discourse` | BERTopic, Topic Modeling, Text-as-Data | simulated | High | draft |
+| `soc-015-social-network-community-diffusion` | Network Analysis, Community Detection, SI Diffusion | simulated | Medium | draft |
+| `soc-016-multilevel-school-achievement` | Multilevel Model, Linear Mixed Effects, ICC | simulated | Medium | draft |
+| `soc-017-public-feedback-sentiment-modeling` | Sentiment Analysis, Text Classification, TF-IDF | simulated | High | draft |
 
 ---
 
@@ -44,8 +52,9 @@
 ## 统计概览
 
 - **领域数**：3
-- **案例总数**：9
-- **模拟数据案例**：8
+- **案例总数**：17
+- **模拟数据案例**：16
 - **真实数据案例**：1
 - **已完成案例**：2（soc-004, soc-006）
 - **就绪案例**：1（eco-002）
+- **第二批新增**：8（eco-010~013, soc-014~017）
