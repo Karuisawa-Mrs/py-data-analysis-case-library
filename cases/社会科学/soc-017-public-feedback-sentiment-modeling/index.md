@@ -32,6 +32,9 @@ expected_artifacts:
   - "outputs/classification_report.csv"
   - "outputs/confusion_matrix.png"
   - "outputs/top_terms_or_attention.csv"
+  - "outputs/transformer_metrics.csv"
+  - "outputs/confidence_distribution.png"
+  - "outputs/misclassified_examples.csv"
 validation_scope:
   - "结构完整性校验"
   - "脚本 smoke test"

@@ -1,12 +1,11 @@
 # pyright: basic, reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportAny=false, reportExplicitAny=false, reportMissingTypeArgument=false, reportReturnType=false, reportAttributeAccessIssue=false, reportArgumentType=false, reportUnusedCallResult=false
-# Fallback implementation for eco-012 using only sklearn and statsmodels.
-# See best-practice-roadmap.md for the intended arch + TFT migration path.
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 from typing import Any
+import warnings
 
 import matplotlib
 
@@ -21,16 +20,22 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.arima.model import ARIMA
 
+try:
+    from arch import arch_model
+
+    HAS_ARCH = True
+except ImportError:  # pragma: no cover - exercised only when optional dependency is absent
+    arch_model = None
+    HAS_ARCH = False
+
 
 CASE_ID = "eco-012-volatility-forecast-garch-tft"
-CASE_TITLE = "Volatility forecasting fallback: ARIMA diagnostics vs gradient boosting"
-CLAIM_BOUNDARY = "This case is a simulated fallback benchmark and does not support live trading or risk decisions."
+CASE_TITLE = "Volatility forecasting with GARCH, EGARCH, and a TFT-style proxy"
+CLAIM_BOUNDARY = "This simulated benchmark demonstrates volatility-forecasting methods and is not investment advice."
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Fallback volatility-forecast analysis using sklearn and statsmodels only."
-    )
+    parser = argparse.ArgumentParser(description="Volatility forecast benchmark with GARCH/EGARCH and ML baselines.")
     _ = parser.add_argument(
         "--smoke-test",
         action="store_true",
@@ -68,11 +73,10 @@ def require_int(value: object, field_name: str) -> int:
 
 
 def build_run_config(params: dict[str, Any], smoke_test: bool) -> dict[str, Any]:
-    output_dir_name = str(params.get("output_dir", "outputs"))
     return {
         "seed": require_int(params["seed"], "seed"),
-        "output_dir_name": output_dir_name,
-        "n_obs": 300 if smoke_test else 2000,
+        "output_dir_name": str(params.get("output_dir", "outputs")),
+        "n_obs": 320 if smoke_test else 2000,
         "burn_in": 250 if smoke_test else 500,
         "omega": 0.00002,
         "alpha": 0.10,
@@ -105,19 +109,17 @@ def simulate_garch_like_returns(config: dict[str, Any]) -> pd.DataFrame:
         sigma2[t] = max(sigma2[t], 1e-10)
         returns[t] = np.sqrt(sigma2[t]) * shocks[t]
 
-    dates = pd.date_range(start="2015-01-01", periods=n_obs, freq="B")
     retained_returns = returns[burn_in:]
     retained_sigma = np.sqrt(sigma2[burn_in:])
-    frame = pd.DataFrame(
+    return pd.DataFrame(
         {
-            "date": dates,
+            "date": pd.date_range(start="2015-01-01", periods=n_obs, freq="B"),
             "returns": retained_returns,
             "true_volatility": retained_sigma,
             "squared_returns": retained_returns**2,
             "absolute_returns": np.abs(retained_returns),
         }
     )
-    return frame
 
 
 def build_modeling_frame(data: pd.DataFrame, rv_window: int, lag_count: int) -> pd.DataFrame:
@@ -135,8 +137,7 @@ def build_modeling_frame(data: pd.DataFrame, rv_window: int, lag_count: int) -> 
         frame[f"realized_vol_lag_{lag}"] = frame["realized_volatility"].shift(lag)
 
     frame["target_realized_volatility"] = frame["realized_volatility"].shift(-1)
-    clean_frame = frame.dropna().reset_index(drop=True)
-    return clean_frame
+    return frame.dropna().reset_index(drop=True)
 
 
 def train_test_split_time_series(frame: pd.DataFrame, test_size: float) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -168,16 +169,75 @@ def fit_arima_baseline(train_returns: pd.Series, forecast_steps: int) -> tuple[n
     return arima_vol_forecast, pd.Series(fitted.resid, copy=True), diagnostics
 
 
+def fit_arch_family(
+    train_returns: pd.Series,
+    full_returns: pd.Series,
+    forecast_steps: int,
+    output_dir: Path,
+) -> tuple[dict[str, np.ndarray], pd.DataFrame, pd.DataFrame, list[str]]:
+    predictions: dict[str, np.ndarray] = {}
+    summary_rows: list[dict[str, float | str]] = []
+    conditional_rows: list[pd.DataFrame] = []
+    notes: list[str] = []
+
+    if not HAS_ARCH or arch_model is None:
+        note = "arch package unavailable; GARCH/EGARCH artifacts contain degraded placeholders."
+        notes.append(note)
+        (output_dir / "garch_summary.txt").write_text(note + "\n", encoding="utf-8")
+        (output_dir / "egarch_summary.txt").write_text(note + "\n", encoding="utf-8")
+        empty_parameters = pd.DataFrame(columns=["model", "parameter", "estimate"])
+        empty_conditional = pd.DataFrame(columns=["date_index", "model", "conditional_volatility"])
+        return predictions, empty_parameters, empty_conditional, notes
+
+    scaled_train = train_returns.astype(float) * 100.0
+    scaled_full = full_returns.astype(float) * 100.0
+    specs = {
+        "garch_1_1": {"vol": "GARCH", "p": 1, "o": 0, "q": 1},
+        "egarch_1_1": {"vol": "EGARCH", "p": 1, "o": 0, "q": 1},
+    }
+
+    for model_name, spec in specs.items():
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            fitted = arch_model(scaled_train, mean="Zero", dist="normal", **spec).fit(disp="off")
+            full_fit = arch_model(scaled_full, mean="Zero", dist="normal", **spec).fit(disp="off")
+
+        forecast_method = "simulation" if model_name == "egarch_1_1" else "analytic"
+        forecast = fitted.forecast(horizon=forecast_steps, method=forecast_method, simulations=200, reindex=False)
+        variance = np.asarray(forecast.variance.iloc[-1], dtype=float)
+        predictions[model_name] = np.sqrt(np.maximum(variance, 1e-10)) / 100.0
+
+        summary_rows.extend(
+            {
+                "model": model_name,
+                "parameter": str(parameter),
+                "estimate": float(value),
+            }
+            for parameter, value in fitted.params.items()
+        )
+        conditional_rows.append(
+            pd.DataFrame(
+                {
+                    "date_index": np.arange(len(scaled_full), dtype=int),
+                    "model": model_name,
+                    "conditional_volatility": np.asarray(full_fit.conditional_volatility, dtype=float) / 100.0,
+                }
+            )
+        )
+
+        summary_file = "garch_summary.txt" if model_name == "garch_1_1" else "egarch_summary.txt"
+        (output_dir / summary_file).write_text(str(fitted.summary()) + "\n", encoding="utf-8")
+
+    conditional = pd.concat(conditional_rows, ignore_index=True) if conditional_rows else pd.DataFrame()
+    return predictions, pd.DataFrame(summary_rows), conditional, notes
+
+
 def fit_gradient_boosting_baseline(
     train_frame: pd.DataFrame,
     test_frame: pd.DataFrame,
     seed: int,
 ) -> tuple[np.ndarray, list[str], GradientBoostingRegressor]:
-    excluded_columns = {
-        "date",
-        "target_realized_volatility",
-        "true_volatility",
-    }
+    excluded_columns = {"date", "target_realized_volatility", "true_volatility"}
     feature_columns = [column for column in train_frame.columns if column not in excluded_columns]
 
     model = GradientBoostingRegressor(
@@ -189,9 +249,46 @@ def fit_gradient_boosting_baseline(
         random_state=seed,
     )
     model.fit(train_frame[feature_columns], train_frame["target_realized_volatility"])
-    predictions = model.predict(test_frame[feature_columns])
-    safe_predictions = np.maximum(predictions, 1e-8)
-    return safe_predictions, feature_columns, model
+    predictions = np.maximum(model.predict(test_frame[feature_columns]), 1e-8)
+    return predictions, feature_columns, model
+
+
+def build_tft_proxy_outputs(
+    gb_forecast: np.ndarray,
+    feature_columns: list[str],
+    model: GradientBoostingRegressor,
+    test_frame: pd.DataFrame,
+    output_dir: Path,
+) -> np.ndarray:
+    # The heavyweight TFT stack is optional for this asset library; when absent,
+    # a tree-based proxy keeps the artifact contract deterministic and explicit.
+    tft_predictions = pd.DataFrame(
+        {
+            "date": test_frame["date"].to_numpy(),
+            "model": "degraded_tft_proxy_gradient_boosting",
+            "forecast_volatility": gb_forecast,
+            "implementation_note": "pytorch-forecasting unavailable; GradientBoostingRegressor used as TFT proxy",
+        }
+    )
+    tft_predictions.to_csv(output_dir / "tft_predictions.csv", index=False)
+
+    importances = np.asarray(model.feature_importances_, dtype=float)
+    total = float(importances.sum()) or 1.0
+    attention = pd.DataFrame(
+        {
+            "feature": feature_columns,
+            "proxy_attention_weight": importances / total,
+            "implementation_note": "feature importance proxy for TFT attention weights",
+        }
+    ).sort_values("proxy_attention_weight", ascending=False)
+    attention.to_csv(output_dir / "tft_attention_weights.csv", index=False)
+    return gb_forecast
+
+
+def qlike_loss(actual_volatility: pd.Series, predicted_volatility: np.ndarray) -> float:
+    actual_variance = np.maximum(np.square(actual_volatility.to_numpy(dtype=float)), 1e-10)
+    predicted_variance = np.maximum(np.square(np.asarray(predicted_volatility, dtype=float)), 1e-10)
+    return float(np.mean(np.log(predicted_variance) + actual_variance / predicted_variance))
 
 
 def build_comparison_table(actual: pd.Series, predictions: dict[str, np.ndarray]) -> pd.DataFrame:
@@ -199,15 +296,16 @@ def build_comparison_table(actual: pd.Series, predictions: dict[str, np.ndarray]
     for model_name, values in predictions.items():
         rmse = float(np.sqrt(mean_squared_error(actual, values)))
         mae = float(mean_absolute_error(actual, values))
-        rows.append({"model": model_name, "rmse": rmse, "mae": mae})
+        rows.append({"model": model_name, "rmse": rmse, "mae": mae, "qlike": qlike_loss(actual, values)})
     table = pd.DataFrame(rows).sort_values(["rmse", "mae"]).reset_index(drop=True)
     table["rank"] = np.arange(1, len(table) + 1)
-    return table[["rank", "model", "rmse", "mae"]]
+    return table[["rank", "model", "rmse", "mae", "qlike"]]
 
 
 def build_residual_diagnostics(
     arima_residuals: pd.Series,
     ljung_box_table: pd.DataFrame,
+    arch_parameter_table: pd.DataFrame,
 ) -> pd.DataFrame:
     summary_rows = [
         {
@@ -232,32 +330,30 @@ def build_residual_diagnostics(
         }
         for _, row in ljung_box_table.iterrows()
     ]
-    return pd.DataFrame(summary_rows + test_rows)
+    parameter_rows = [
+        {
+            "section": "arch_parameter",
+            "metric": f"{row.model}_{row.parameter}",
+            "value": float(row.estimate),
+            "notes": "arch package parameter estimate",
+        }
+        for row in arch_parameter_table.itertuples(index=False)
+    ]
+    return pd.DataFrame(summary_rows + test_rows + parameter_rows)
 
 
 def save_volatility_plot(forecast_frame: pd.DataFrame, figure_path: Path) -> None:
     fig, axis = plt.subplots(figsize=(10, 5), constrained_layout=True)
-    _ = axis.plot(
-        forecast_frame["date"],
-        forecast_frame["actual_realized_volatility"],
-        label="actual_realized_volatility",
-        color="#111111",
-        linewidth=2.0,
-    )
-    _ = axis.plot(
-        forecast_frame["date"],
-        forecast_frame["arima_volatility_forecast"],
-        label="arima_volatility_forecast",
-        color="#1f77b4",
-        linewidth=1.7,
-    )
-    _ = axis.plot(
-        forecast_frame["date"],
-        forecast_frame["gradient_boosting_forecast"],
-        label="gradient_boosting_forecast",
-        color="#d62728",
-        linewidth=1.7,
-    )
+    plot_columns = [
+        ("actual_realized_volatility", "#111111", 2.0),
+        ("garch_1_1_forecast", "#1f77b4", 1.6),
+        ("egarch_1_1_forecast", "#9467bd", 1.6),
+        ("gradient_boosting_forecast", "#d62728", 1.6),
+        ("tft_proxy_forecast", "#2ca02c", 1.4),
+    ]
+    for column, color, width in plot_columns:
+        if column in forecast_frame:
+            _ = axis.plot(forecast_frame["date"], forecast_frame[column], label=column, color=color, linewidth=width)
     _ = axis.set_title("Actual vs predicted volatility")
     _ = axis.set_xlabel("Date")
     _ = axis.set_ylabel("Volatility")
@@ -275,6 +371,7 @@ def write_summary(
     diagnostics_table: pd.DataFrame,
     feature_columns: list[str],
     forecast_frame: pd.DataFrame,
+    optional_notes: list[str],
 ) -> None:
     best_model = str(comparison_table.iloc[0]["model"])
     best_rmse = float(comparison_table.iloc[0]["rmse"])
@@ -283,6 +380,7 @@ def write_summary(
 
     arch_rows = diagnostics_table[diagnostics_table["section"] == "arch_test"].copy()
     arch_lines = [f"- {row.metric}: pvalue={row.value:.4f}" for row in arch_rows.itertuples(index=False)]
+    notes = optional_notes or ["arch package branch executed; TFT branch emitted degraded proxy artifacts."]
 
     lines = [
         f"case_id: {CASE_ID}",
@@ -290,18 +388,12 @@ def write_summary(
         f"mode: {mode_label}",
         f"seed: {int(config['seed'])}",
         f"n_obs: {int(config['n_obs'])}",
-        "implementation_note: fallback path using statsmodels ARIMA diagnostics and sklearn GradientBoostingRegressor",
-        "roadmap_reference: best-practice-roadmap.md",
+        "implementation_note: best available branch uses arch GARCH/EGARCH; TFT artifacts use a documented proxy unless pytorch-forecasting is added.",
         f"claim_boundary: {CLAIM_BOUNDARY}",
-        "",
-        "Data generating process:",
-        f"- returns follow r_t = sigma_t * z_t with sigma^2_t = omega + alpha * r^2_(t-1) + beta * sigma^2_(t-1)",
-        f"- omega={float(config['omega']):.6f}, alpha={float(config['alpha']):.3f}, beta={float(config['beta']):.3f}",
-        f"- realized volatility proxy: sqrt(rolling mean of squared returns, window={int(config['rv_window'])})",
         "",
         "Model comparison:",
         *[
-            f"- {row.model}: RMSE={row.rmse:.6f}, MAE={row.mae:.6f}"
+            f"- {row.model}: RMSE={row.rmse:.6f}, MAE={row.mae:.6f}, QLIKE={row.qlike:.6f}"
             for row in comparison_table.itertuples(index=False)
         ],
         f"- best model: {best_model} (RMSE={best_rmse:.6f}, MAE={best_mae:.6f})",
@@ -309,7 +401,10 @@ def write_summary(
         "Residual diagnostics for ARIMA baseline:",
         *arch_lines,
         "",
-        "Feature design for ML baseline:",
+        "Optional dependency notes:",
+        *[f"- {note}" for note in notes],
+        "",
+        "Feature design for ML/TFT proxy baseline:",
         f"- feature count: {len(feature_columns)}",
         f"- representative features: {', '.join(feature_columns[:8])}",
         "",
@@ -324,6 +419,7 @@ def write_summary(
         f"seed: {int(config['seed'])}",
         f"observations: {int(config['n_obs'])}",
         f"forecast_rows: {len(forecast_frame)}",
+        f"best_model: {best_model}",
         "status: smoke-compatible artifacts generated",
     ]
     (output_dir / "smoke_test.txt").write_text("\n".join(smoke_lines) + "\n", encoding="utf-8")
@@ -340,52 +436,64 @@ def run(smoke_test: bool = False) -> dict[str, Path]:
         rv_window=int(config["rv_window"]),
         lag_count=int(config["lag_count"]),
     )
-    train_frame, test_frame = train_test_split_time_series(
-        modeling_frame,
-        test_size=float(config["test_size"]),
-    )
+    train_frame, test_frame = train_test_split_time_series(modeling_frame, test_size=float(config["test_size"]))
 
     arima_forecast, arima_residuals, ljung_box_table = fit_arima_baseline(
         train_returns=train_frame["returns"],
         forecast_steps=len(test_frame),
     )
-    gb_forecast, feature_columns, _ = fit_gradient_boosting_baseline(
+    arch_predictions, arch_parameter_table, conditional_volatility, optional_notes = fit_arch_family(
+        train_returns=train_frame["returns"],
+        full_returns=modeling_frame["returns"],
+        forecast_steps=len(test_frame),
+        output_dir=paths["output_dir"],
+    )
+    conditional_volatility.to_csv(paths["output_dir"] / "conditional_volatility.csv", index=False)
+
+    gb_forecast, feature_columns, gb_model = fit_gradient_boosting_baseline(
         train_frame=train_frame,
         test_frame=test_frame,
         seed=int(config["seed"]),
     )
-
-    forecast_frame = pd.DataFrame(
-        {
-            "date": test_frame["date"].to_numpy(),
-            "actual_realized_volatility": test_frame["target_realized_volatility"].to_numpy(),
-            "arima_volatility_forecast": arima_forecast,
-            "gradient_boosting_forecast": gb_forecast,
-            "returns": test_frame["returns"].to_numpy(),
-            "true_volatility": test_frame["true_volatility"].to_numpy(),
-        }
+    tft_proxy_forecast = build_tft_proxy_outputs(
+        gb_forecast=gb_forecast,
+        feature_columns=feature_columns,
+        model=gb_model,
+        test_frame=test_frame,
+        output_dir=paths["output_dir"],
     )
+
+    forecast_payload: dict[str, Any] = {
+        "date": test_frame["date"].to_numpy(),
+        "actual_realized_volatility": test_frame["target_realized_volatility"].to_numpy(),
+        "arima_volatility_forecast": arima_forecast,
+        "gradient_boosting_forecast": gb_forecast,
+        "tft_proxy_forecast": tft_proxy_forecast,
+        "returns": test_frame["returns"].to_numpy(),
+        "true_volatility": test_frame["true_volatility"].to_numpy(),
+    }
+    for model_name, values in arch_predictions.items():
+        forecast_payload[f"{model_name}_forecast"] = values
+    forecast_frame = pd.DataFrame(forecast_payload)
     forecast_frame.to_csv(paths["output_dir"] / "volatility_forecasts.csv", index=False)
 
-    comparison_table = build_comparison_table(
-        actual=test_frame["target_realized_volatility"],
-        predictions={
-            "arima_baseline": arima_forecast,
-            "gradient_boosting": gb_forecast,
-        },
-    )
+    prediction_map = {
+        "arima_baseline": arima_forecast,
+        "gradient_boosting": gb_forecast,
+        "degraded_tft_proxy": tft_proxy_forecast,
+        **arch_predictions,
+    }
+    comparison_table = build_comparison_table(actual=test_frame["target_realized_volatility"], predictions=prediction_map)
     comparison_table.to_csv(paths["output_dir"] / "model_comparison.csv", index=False)
 
     diagnostics_table = build_residual_diagnostics(
         arima_residuals=arima_residuals,
         ljung_box_table=ljung_box_table,
+        arch_parameter_table=arch_parameter_table,
     )
     diagnostics_table.to_csv(paths["output_dir"] / "residual_diagnostics.csv", index=False)
 
-    save_volatility_plot(
-        forecast_frame=forecast_frame,
-        figure_path=paths["output_dir"] / "volatility_paths.png",
-    )
+    save_volatility_plot(forecast_frame=forecast_frame, figure_path=paths["output_dir"] / "volatility_paths.png")
     write_summary(
         output_dir=paths["output_dir"],
         config=config,
@@ -393,6 +501,7 @@ def run(smoke_test: bool = False) -> dict[str, Path]:
         diagnostics_table=diagnostics_table,
         feature_columns=feature_columns,
         forecast_frame=forecast_frame,
+        optional_notes=optional_notes,
     )
     return paths
 

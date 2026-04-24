@@ -32,6 +32,9 @@ expected_artifacts:
   - "outputs/cate_by_segment.csv"
   - "outputs/orthogonal_score_diagnostics.csv"
   - "outputs/cate_distribution.png"
+  - "outputs/dml_summary.txt"
+  - "outputs/causal_forest_importances.csv"
+  - "outputs/ate_confidence_intervals.csv"
 validation_scope:
   - "结构完整性校验"
   - "脚本 smoke test"

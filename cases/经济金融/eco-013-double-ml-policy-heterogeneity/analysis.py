@@ -17,8 +17,17 @@ import numpy as np
 import pandas as pd
 import yaml
 from numpy.typing import NDArray
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor, RandomForestRegressor
 from sklearn.model_selection import KFold
+
+try:
+    from econml.dml import CausalForestDML, LinearDML
+
+    HAS_ECONML = True
+except ImportError:  # pragma: no cover - depends on optional Python 3.10-3.12 environment
+    CausalForestDML = None
+    LinearDML = None
+    HAS_ECONML = False
 
 
 CASE_ID = "eco-013-double-ml-policy-heterogeneity"
@@ -26,6 +35,9 @@ CASE_TITLE = "政策效果的异质性分析：双重机器学习与因果森林
 CLAIM_BOUNDARY = "该案例演示因果机器学习方法，不替代真实政策评估的严谨识别设计。"
 
 FloatArray = NDArray[np.float64]
+FEATURE_COLUMNS = ["X1", "X2", "X3", "W1", "W2", "W3", "W4", "post_period", "period"]
+HETEROGENEITY_COLUMNS = ["X1", "X2", "X3", "post_period"]
+CONTROL_COLUMNS = ["W1", "W2", "W3", "W4", "period"]
 
 
 class Paths(TypedDict):
@@ -210,8 +222,7 @@ def bootstrap_mean_interval(values: FloatArray, n_bootstrap: int, seed: int, alp
 
 
 def manual_double_ml_estimate(panel: pd.DataFrame, n_folds: int, n_bootstrap: int, seed: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    feature_columns = ["X1", "X2", "X3", "W1", "W2", "W3", "W4", "post_period", "period"]
-    features = panel.loc[:, feature_columns].copy()
+    features = panel.loc[:, FEATURE_COLUMNS].copy()
     outcome = panel["Y"].astype(float)
     treatment = panel["T"].astype(float)
 
@@ -353,6 +364,132 @@ def build_segment_table(score_frame: pd.DataFrame, n_bootstrap: int, seed: int) 
     return segment_table
 
 
+def build_fallback_importances(score_frame: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, float | str]] = []
+    effects = score_frame["orthogonal_score"].to_numpy(dtype=float)
+    for column in HETEROGENEITY_COLUMNS:
+        values = score_frame[column].to_numpy(dtype=float)
+        if np.std(values) <= 1e-12 or np.std(effects) <= 1e-12:
+            importance = 0.0
+        else:
+            importance = abs(float(np.corrcoef(values, effects)[0, 1]))
+        rows.append(
+            {
+                "feature": column,
+                "importance": importance,
+                "source": "fallback_abs_correlation_with_orthogonal_score",
+            }
+        )
+    return pd.DataFrame(rows).sort_values("importance", ascending=False).reset_index(drop=True)
+
+
+def econml_double_ml_estimate(
+    panel: pd.DataFrame,
+    n_bootstrap: int,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
+    if not HAS_ECONML or LinearDML is None or CausalForestDML is None:
+        raise ImportError("econml is not available in this Python environment")
+
+    y = panel["Y"].to_numpy(dtype=float)
+    t = panel["T"].to_numpy(dtype=float)
+    x = panel.loc[:, HETEROGENEITY_COLUMNS].copy()
+    w = panel.loc[:, CONTROL_COLUMNS].copy()
+
+    linear_dml = LinearDML(
+        model_y=GradientBoostingRegressor(n_estimators=100, max_depth=3, random_state=seed),
+        model_t=GradientBoostingClassifier(n_estimators=100, max_depth=2, random_state=seed + 1),
+        discrete_treatment=True,
+        cv=3,
+        random_state=seed,
+    )
+    linear_dml.fit(y, t, X=x, W=w)
+    linear_effect = np.asarray(linear_dml.effect(x), dtype=float)
+    ate = float(np.mean(linear_effect))
+    ate_ci_low, ate_ci_high = bootstrap_mean_interval(linear_effect, n_bootstrap=n_bootstrap, seed=seed + 101)
+
+    treated_effects = linear_effect[t == 1.0]
+    att = float(np.mean(treated_effects)) if treated_effects.size else float("nan")
+    att_ci_low, att_ci_high = bootstrap_mean_interval(
+        treated_effects if treated_effects.size else np.array([np.nan], dtype=float),
+        n_bootstrap=n_bootstrap,
+        seed=seed + 202,
+    )
+
+    causal_forest = CausalForestDML(
+        model_y=GradientBoostingRegressor(n_estimators=100, max_depth=3, random_state=seed + 2),
+        model_t=GradientBoostingClassifier(n_estimators=100, max_depth=2, random_state=seed + 3),
+        discrete_treatment=True,
+        n_estimators=200,
+        min_samples_leaf=8,
+        max_depth=6,
+        cv=3,
+        random_state=seed + 4,
+    )
+    causal_forest.fit(y, t, X=x, W=w)
+    forest_effect = np.asarray(causal_forest.effect(x), dtype=float)
+
+    score_frame = panel.copy()
+    score_frame["fold"] = 0
+    score_frame["mu_y"] = np.nan
+    score_frame["mu_t"] = np.nan
+    score_frame["y_residual"] = np.nan
+    score_frame["t_residual"] = np.nan
+    score_frame["orthogonal_score"] = linear_effect
+    score_frame["causal_forest_cate"] = forest_effect
+    score_frame["score_numerator"] = np.nan
+
+    estimates = pd.DataFrame(
+        [
+            {
+                "estimand": "ATE",
+                "estimate": ate,
+                "ci_lower": ate_ci_low,
+                "ci_upper": ate_ci_high,
+                "n_obs": int(len(panel)),
+                "treated_share": float(np.mean(t)),
+                "orthogonal_denominator": np.nan,
+                "bootstrap_draws": int(n_bootstrap),
+            },
+            {
+                "estimand": "ATT",
+                "estimate": att,
+                "ci_lower": att_ci_low,
+                "ci_upper": att_ci_high,
+                "n_obs": int(np.sum(t == 1.0)),
+                "treated_share": float(np.mean(t)),
+                "orthogonal_denominator": np.nan,
+                "bootstrap_draws": int(n_bootstrap),
+            },
+        ]
+    )
+    diagnostics = pd.DataFrame(
+        [
+            {
+                "n_obs": int(len(panel)),
+                "mean_mu_y": np.nan,
+                "mean_mu_t": np.nan,
+                "mean_y_residual": np.nan,
+                "std_y_residual": np.nan,
+                "mean_t_residual": np.nan,
+                "std_t_residual": np.nan,
+                "mean_score": ate,
+                "treated_share": float(np.mean(t)),
+                "orthogonal_denominator": np.nan,
+                "implementation": "econml_LinearDML_and_CausalForestDML",
+            }
+        ]
+    )
+    importances = pd.DataFrame(
+        {
+            "feature": HETEROGENEITY_COLUMNS,
+            "importance": np.asarray(causal_forest.feature_importances_, dtype=float),
+            "source": "econml_causal_forest_split_importance",
+        }
+    ).sort_values("importance", ascending=False)
+    return estimates, diagnostics, score_frame, importances, "econml LinearDML + CausalForestDML"
+
+
 def save_cate_histogram(score_frame: pd.DataFrame, figure_path: Path) -> None:
     fig, axis = plt.subplots(figsize=(8, 5), constrained_layout=True)
     score_mean = float(score_frame["orthogonal_score"].mean())
@@ -380,6 +517,7 @@ def write_summary(
     segment_table: pd.DataFrame,
     diagnostics: pd.DataFrame,
     smoke_test: bool,
+    implementation_note: str,
 ) -> None:
     ate_row = estimates.loc[estimates["estimand"] == "ATE"].iloc[0]
     att_row = estimates.loc[estimates["estimand"] == "ATT"].iloc[0]
@@ -389,7 +527,7 @@ def write_summary(
         f"case_id: {CASE_ID}",
         f"title: {CASE_TITLE}",
         f"mode: {'SMOKE TEST' if smoke_test else 'FULL RUN'}",
-        f"fallback_note: sklearn-only manual Double ML fallback; see best-practice-roadmap.md for the EconML migration plan.",
+        f"implementation_note: {implementation_note}",
         f"seed: {config['seed']}",
         f"n_units: {config['n_units']}",
         f"n_periods: {config['n_periods']}",
@@ -410,7 +548,12 @@ def write_summary(
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_smoke_manifest(smoke_path: Path, smoke_test: bool, artifacts: dict[str, Path]) -> None:
+def write_smoke_manifest(
+    smoke_path: Path,
+    smoke_test: bool,
+    artifacts: dict[str, Path],
+    implementation_note: str,
+) -> None:
     lines = [
         f"mode: {'SMOKE TEST' if smoke_test else 'FULL RUN'}",
         f"case_id: {CASE_ID}",
@@ -419,10 +562,29 @@ def write_smoke_manifest(smoke_path: Path, smoke_test: bool, artifacts: dict[str
         f"cate_by_segment: {artifacts['cate_by_segment'].name}",
         f"orthogonal_score_diagnostics: {artifacts['orthogonal_score_diagnostics'].name}",
         f"cate_distribution_plot: {artifacts['cate_distribution'].name}",
-        "fallback_note: sklearn-only manual Double ML implementation.",
+        f"implementation_note: {implementation_note}",
         f"claim_boundary: {CLAIM_BOUNDARY}",
     ]
     smoke_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_dml_summary(
+    summary_path: Path,
+    implementation_note: str,
+    estimates: pd.DataFrame,
+    importances: pd.DataFrame,
+) -> None:
+    ate_row = estimates.loc[estimates["estimand"] == "ATE"].iloc[0]
+    top_feature = importances.iloc[0] if not importances.empty else None
+    lines = [
+        f"case_id: {CASE_ID}",
+        f"implementation_note: {implementation_note}",
+        f"ate_estimate: {ate_row['estimate']:.6f}",
+        f"ate_ci: [{ate_row['ci_lower']:.6f}, {ate_row['ci_upper']:.6f}]",
+        "top_heterogeneity_feature: "
+        + (f"{top_feature['feature']} ({float(top_feature['importance']):.6f})" if top_feature is not None else "none"),
+    ]
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_case(smoke_test: bool = False) -> dict[str, str]:
@@ -435,6 +597,9 @@ def run_case(smoke_test: bool = False) -> dict[str, str]:
     cate_by_segment_path = output_dir / "cate_by_segment.csv"
     orthogonal_score_diagnostics_path = output_dir / "orthogonal_score_diagnostics.csv"
     cate_distribution_path = output_dir / "cate_distribution.png"
+    dml_summary_path = output_dir / "dml_summary.txt"
+    causal_forest_importances_path = output_dir / "causal_forest_importances.csv"
+    ate_confidence_intervals_path = output_dir / "ate_confidence_intervals.csv"
     summary_path = output_dir / "summary.txt"
     smoke_path = output_dir / "smoke_test.txt"
 
@@ -443,12 +608,22 @@ def run_case(smoke_test: bool = False) -> dict[str, str]:
         n_units=config["n_units"],
         n_periods=config["n_periods"],
     )
-    estimates, diagnostics, score_frame = manual_double_ml_estimate(
-        panel=panel,
-        n_folds=config["n_folds"],
-        n_bootstrap=config["n_bootstrap"],
-        seed=config["seed"],
-    )
+    try:
+        estimates, diagnostics, score_frame, importances, implementation_note = econml_double_ml_estimate(
+            panel=panel,
+            n_bootstrap=config["n_bootstrap"],
+            seed=config["seed"],
+        )
+    except (ImportError, ValueError, TypeError, RuntimeError) as exc:
+        estimates, diagnostics, score_frame = manual_double_ml_estimate(
+            panel=panel,
+            n_folds=config["n_folds"],
+            n_bootstrap=config["n_bootstrap"],
+            seed=config["seed"],
+        )
+        importances = build_fallback_importances(score_frame)
+        implementation_note = f"sklearn manual Double ML fallback; EconML unavailable or failed: {type(exc).__name__}: {exc}"
+
     segment_table = build_segment_table(
         score_frame=score_frame,
         n_bootstrap=max(100, config["n_bootstrap"] // 2),
@@ -456,19 +631,34 @@ def run_case(smoke_test: bool = False) -> dict[str, str]:
     )
 
     estimates.to_csv(ate_att_estimates_path, index=False)
+    estimates.to_csv(ate_confidence_intervals_path, index=False)
     segment_table.to_csv(cate_by_segment_path, index=False)
     diagnostics.to_csv(orthogonal_score_diagnostics_path, index=False)
+    importances.to_csv(causal_forest_importances_path, index=False)
     save_cate_histogram(score_frame, cate_distribution_path)
-    write_summary(summary_path, config, panel, estimates, segment_table, diagnostics, smoke_test)
+    write_summary(
+        summary_path,
+        config,
+        panel,
+        estimates,
+        segment_table,
+        diagnostics,
+        smoke_test,
+        implementation_note,
+    )
+    write_dml_summary(dml_summary_path, implementation_note, estimates, importances)
 
     artifacts = {
         "summary": summary_path,
         "ate_att_estimates": ate_att_estimates_path,
+        "ate_confidence_intervals": ate_confidence_intervals_path,
         "cate_by_segment": cate_by_segment_path,
         "orthogonal_score_diagnostics": orthogonal_score_diagnostics_path,
+        "causal_forest_importances": causal_forest_importances_path,
+        "dml_summary": dml_summary_path,
         "cate_distribution": cate_distribution_path,
     }
-    write_smoke_manifest(smoke_path, smoke_test, artifacts)
+    write_smoke_manifest(smoke_path, smoke_test, artifacts, implementation_note)
     return {key: str(value) for key, value in {**artifacts, "smoke": smoke_path}.items()}
 
 

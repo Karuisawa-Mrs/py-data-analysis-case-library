@@ -22,6 +22,17 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_validate
 from sklearn.pipeline import FeatureUnion, Pipeline
 
+try:
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    HAS_TRANSFORMERS = True
+except ImportError:  # pragma: no cover - optional best-practice dependency
+    AutoModelForSequenceClassification = None
+    AutoTokenizer = None
+    torch = None
+    HAS_TRANSFORMERS = False
+
 
 CASE_ID = "soc-017-public-feedback-sentiment-modeling"
 POSITIVE_LABEL = 1
@@ -45,6 +56,16 @@ class EvaluationResult:
     metrics_df: pd.DataFrame
     report_df: pd.DataFrame
     confusion_matrix: npt.NDArray[np.int_]
+
+
+@dataclass(frozen=True)
+class TransformerResult:
+    metrics_df: pd.DataFrame
+    report_df: pd.DataFrame
+    predictions: npt.NDArray[np.int_]
+    confidence: npt.NDArray[np.float64]
+    attention_terms: pd.DataFrame
+    implementation_note: str
 
 
 def parse_args() -> bool:
@@ -335,23 +356,24 @@ def evaluate_pipeline(dataset: pd.DataFrame, config: CaseConfig) -> EvaluationRe
     )
 
     metrics_rows = [
-        {"metric": "accuracy_mean", "value": float(np.mean(scores["test_accuracy"]))},
-        {"metric": "accuracy_std", "value": float(np.std(scores["test_accuracy"]))},
-        {"metric": "precision_mean", "value": float(np.mean(scores["test_precision"]))},
-        {"metric": "precision_std", "value": float(np.std(scores["test_precision"]))},
-        {"metric": "recall_mean", "value": float(np.mean(scores["test_recall"]))},
-        {"metric": "recall_std", "value": float(np.std(scores["test_recall"]))},
-        {"metric": "f1_mean", "value": float(np.mean(scores["test_f1"]))},
-        {"metric": "f1_std", "value": float(np.std(scores["test_f1"]))},
-        {"metric": "support_total", "value": float(len(dataset))},
-        {"metric": "positive_rate", "value": float(dataset["sentiment_label"].mean())},
-        {"metric": "tn", "value": float(confusion[0, 0])},
-        {"metric": "fp", "value": float(confusion[0, 1])},
-        {"metric": "fn", "value": float(confusion[1, 0])},
-        {"metric": "tp", "value": float(confusion[1, 1])},
+        {"model": "tfidf_logistic_regression", "metric": "accuracy_mean", "value": float(np.mean(scores["test_accuracy"]))},
+        {"model": "tfidf_logistic_regression", "metric": "accuracy_std", "value": float(np.std(scores["test_accuracy"]))},
+        {"model": "tfidf_logistic_regression", "metric": "precision_mean", "value": float(np.mean(scores["test_precision"]))},
+        {"model": "tfidf_logistic_regression", "metric": "precision_std", "value": float(np.std(scores["test_precision"]))},
+        {"model": "tfidf_logistic_regression", "metric": "recall_mean", "value": float(np.mean(scores["test_recall"]))},
+        {"model": "tfidf_logistic_regression", "metric": "recall_std", "value": float(np.std(scores["test_recall"]))},
+        {"model": "tfidf_logistic_regression", "metric": "f1_mean", "value": float(np.mean(scores["test_f1"]))},
+        {"model": "tfidf_logistic_regression", "metric": "f1_std", "value": float(np.std(scores["test_f1"]))},
+        {"model": "tfidf_logistic_regression", "metric": "support_total", "value": float(len(dataset))},
+        {"model": "tfidf_logistic_regression", "metric": "positive_rate", "value": float(dataset["sentiment_label"].mean())},
+        {"model": "tfidf_logistic_regression", "metric": "tn", "value": float(confusion[0, 0])},
+        {"model": "tfidf_logistic_regression", "metric": "fp", "value": float(confusion[0, 1])},
+        {"model": "tfidf_logistic_regression", "metric": "fn", "value": float(confusion[1, 0])},
+        {"model": "tfidf_logistic_regression", "metric": "tp", "value": float(confusion[1, 1])},
     ]
 
     report_df = pd.DataFrame(report).transpose().reset_index(names="label")
+    report_df.insert(0, "model", "tfidf_logistic_regression")
     return EvaluationResult(
         fitted_pipeline=fitted_pipeline,
         metrics_df=pd.DataFrame(metrics_rows),
@@ -398,6 +420,125 @@ def extract_top_terms(fitted_pipeline: Pipeline, top_term_count: int) -> pd.Data
     return pd.DataFrame(top_terms.loc[:, ["polarity", "rank", "source", "term", "coefficient"]]).copy()
 
 
+def evaluate_transformer_model(dataset: pd.DataFrame, config: CaseConfig) -> TransformerResult:
+    if not HAS_TRANSFORMERS or AutoTokenizer is None or AutoModelForSequenceClassification is None or torch is None:
+        raise ImportError("transformers and torch are required for the Transformer branch")
+
+    model_name = "distilbert-base-uncased-finetuned-sst-2-english"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, output_attentions=True)
+    model.eval()
+
+    texts = dataset["text"].astype(str).tolist()
+    labels = dataset["sentiment_label"].to_numpy(dtype=int)
+    predictions: list[int] = []
+    confidences: list[float] = []
+    attention_rows: list[dict[str, float | int | str]] = []
+
+    batch_size = 16
+    with torch.no_grad():
+        for start in range(0, len(texts), batch_size):
+            batch_texts = texts[start : start + batch_size]
+            encoded = tokenizer(batch_texts, padding=True, truncation=True, max_length=160, return_tensors="pt")
+            outputs = model(**encoded)
+            probabilities = torch.softmax(outputs.logits, dim=-1)
+            batch_confidence, batch_prediction = torch.max(probabilities, dim=-1)
+            predictions.extend(int(value) for value in batch_prediction.cpu().numpy())
+            confidences.extend(float(value) for value in batch_confidence.cpu().numpy())
+
+            if start == 0 and outputs.attentions:
+                tokens = tokenizer.convert_ids_to_tokens(encoded["input_ids"][0])
+                cls_attention = outputs.attentions[-1][0, :, 0, :].mean(dim=0).cpu().numpy()
+                for rank, token_index in enumerate(np.argsort(cls_attention)[::-1][: config.top_term_count], start=1):
+                    token = str(tokens[int(token_index)])
+                    if token in {"[CLS]", "[SEP]", "[PAD]"}:
+                        continue
+                    attention_rows.append(
+                        {
+                            "polarity": "attention",
+                            "rank": rank,
+                            "source": "transformer_attention",
+                            "term": token,
+                            "coefficient": float(cls_attention[int(token_index)]),
+                        }
+                    )
+
+    prediction_array = np.asarray(predictions, dtype=int)
+    confidence_array = np.asarray(confidences, dtype=np.float64)
+    report = classification_report(
+        labels,
+        prediction_array,
+        output_dict=True,
+        target_names=["negative", "positive"],
+        zero_division=0,
+    )
+    confusion = confusion_matrix(labels, prediction_array, labels=[NEGATIVE_LABEL, POSITIVE_LABEL])
+    report_df = pd.DataFrame(report).transpose().reset_index(names="label")
+    report_df.insert(0, "model", "distilbert_sst2_zero_shot")
+    metrics_df = pd.DataFrame(
+        [
+            {"model": "distilbert_sst2_zero_shot", "metric": "accuracy", "value": float(np.mean(prediction_array == labels))},
+            {"model": "distilbert_sst2_zero_shot", "metric": "confidence_mean", "value": float(confidence_array.mean())},
+            {"model": "distilbert_sst2_zero_shot", "metric": "confidence_std", "value": float(confidence_array.std())},
+            {"model": "distilbert_sst2_zero_shot", "metric": "tn", "value": float(confusion[0, 0])},
+            {"model": "distilbert_sst2_zero_shot", "metric": "fp", "value": float(confusion[0, 1])},
+            {"model": "distilbert_sst2_zero_shot", "metric": "fn", "value": float(confusion[1, 0])},
+            {"model": "distilbert_sst2_zero_shot", "metric": "tp", "value": float(confusion[1, 1])},
+        ]
+    )
+    attention_terms = pd.DataFrame(attention_rows)
+    if attention_terms.empty:
+        attention_terms = pd.DataFrame(
+            [{"polarity": "attention", "rank": 1, "source": "transformer_attention", "term": "unavailable", "coefficient": 0.0}]
+        )
+    return TransformerResult(
+        metrics_df=metrics_df,
+        report_df=report_df,
+        predictions=prediction_array,
+        confidence=confidence_array,
+        attention_terms=attention_terms,
+        implementation_note=f"Transformer branch used {model_name}",
+    )
+
+
+def write_confidence_distribution(confidence: npt.NDArray[np.float64], output_path: Path) -> None:
+    figure, axis = plt.subplots(figsize=(6.5, 4.2), constrained_layout=True)
+    axis.hist(confidence, bins=12, color="#4C78A8", edgecolor="white")
+    axis.set_title("Transformer confidence distribution")
+    axis.set_xlabel("Softmax confidence")
+    axis.set_ylabel("Count")
+    axis.grid(axis="y", alpha=0.25)
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
+def build_misclassified_examples(
+    dataset: pd.DataFrame,
+    predictions: npt.NDArray[np.int_],
+    confidence: npt.NDArray[np.float64],
+) -> pd.DataFrame:
+    frame = dataset.loc[:, ["feedback_id", "text", "sentiment_label", "sentiment_name"]].copy()
+    frame["predicted_label"] = predictions
+    frame["predicted_name"] = frame["predicted_label"].replace({NEGATIVE_LABEL: "negative", POSITIVE_LABEL: "positive"})
+    frame["confidence"] = confidence
+    frame = frame[frame["sentiment_label"] != frame["predicted_label"]].sort_values("confidence", ascending=False)
+    if frame.empty:
+        return pd.DataFrame(
+            [
+                {
+                    "feedback_id": 0,
+                    "text": "No misclassified examples in this deterministic run.",
+                    "sentiment_label": -1,
+                    "sentiment_name": "none",
+                    "predicted_label": -1,
+                    "predicted_name": "none",
+                    "confidence": 0.0,
+                }
+            ]
+        )
+    return frame.head(20).reset_index(drop=True)
+
+
 def write_confusion_matrix_figure(confusion: npt.NDArray[np.int_], output_path: Path) -> None:
     figure, axis = plt.subplots(figsize=(5.5, 4.5))
     image = axis.imshow(confusion, cmap="Blues")
@@ -430,6 +571,7 @@ def write_summary_files(
     top_terms: pd.DataFrame,
     output_dir: Path,
     smoke_test: bool,
+    implementation_note: str,
 ) -> None:
     metrics_lookup = dict(zip(metrics_df["metric"], metrics_df["value"]))
     mode_label = "SMOKE TEST" if smoke_test else "FULL RUN"
@@ -443,7 +585,7 @@ def write_summary_files(
         f"cv_recall_mean: {metrics_lookup['recall_mean']:.4f}",
         f"cv_f1_mean: {metrics_lookup['f1_mean']:.4f}",
         f"confusion_matrix: tn={int(metrics_lookup['tn'])}, fp={int(metrics_lookup['fp'])}, fn={int(metrics_lookup['fn'])}, tp={int(metrics_lookup['tp'])}",
-        "model_note: sklearn-only fallback baseline; transformer migration is documented in best-practice-roadmap.md",
+        f"model_note: {implementation_note}",
         "top_positive_terms: " + ", ".join(top_terms.loc[top_terms["polarity"] == "positive", "term"].head(5).tolist()),
         "top_negative_terms: " + ", ".join(top_terms.loc[top_terms["polarity"] == "negative", "term"].head(5).tolist()),
     ]
@@ -474,6 +616,45 @@ def run(smoke_test: bool = False) -> dict[str, Path]:
     metrics_df = evaluation.metrics_df
     report_df = evaluation.report_df
     top_terms = extract_top_terms(evaluation.fitted_pipeline, config.top_term_count)
+    implementation_note = "TF-IDF baseline completed; Transformer branch not yet evaluated."
+
+    transformer_metrics_path = output_dir / "transformer_metrics.csv"
+    confidence_distribution_path = output_dir / "confidence_distribution.png"
+    misclassified_examples_path = output_dir / "misclassified_examples.csv"
+
+    try:
+        transformer_result = evaluate_transformer_model(dataset, config)
+        implementation_note = f"TF-IDF baseline plus {transformer_result.implementation_note}"
+        metrics_df = pd.concat([metrics_df, transformer_result.metrics_df], ignore_index=True)
+        report_df = pd.concat([report_df, transformer_result.report_df], ignore_index=True)
+        top_terms = pd.concat([top_terms, transformer_result.attention_terms], ignore_index=True)
+        transformer_result.metrics_df.to_csv(transformer_metrics_path, index=False)
+        write_confidence_distribution(transformer_result.confidence, confidence_distribution_path)
+        build_misclassified_examples(dataset, transformer_result.predictions, transformer_result.confidence).to_csv(
+            misclassified_examples_path,
+            index=False,
+        )
+    except (ImportError, OSError, ValueError, RuntimeError) as exc:
+        implementation_note = f"TF-IDF baseline completed; Transformer branch degraded: {type(exc).__name__}: {exc}"
+        baseline_probabilities = evaluation.fitted_pipeline.predict_proba(dataset["text"])
+        baseline_confidence = np.max(baseline_probabilities, axis=1).astype(np.float64)
+        baseline_predictions = evaluation.fitted_pipeline.predict(dataset["text"]).astype(int)
+        fallback_metrics = pd.DataFrame(
+            [
+                {
+                    "model": "transformer_unavailable",
+                    "metric": "branch_status",
+                    "value": 0.0,
+                    "note": implementation_note,
+                }
+            ]
+        )
+        fallback_metrics.to_csv(transformer_metrics_path, index=False)
+        write_confidence_distribution(baseline_confidence, confidence_distribution_path)
+        build_misclassified_examples(dataset, baseline_predictions, baseline_confidence).to_csv(
+            misclassified_examples_path,
+            index=False,
+        )
 
     model_metrics_path = output_dir / "model_metrics.csv"
     classification_report_path = output_dir / "classification_report.csv"
@@ -484,7 +665,7 @@ def run(smoke_test: bool = False) -> dict[str, Path]:
     report_df.to_csv(classification_report_path, index=False)
     top_terms.to_csv(top_terms_path, index=False)
     write_confusion_matrix_figure(evaluation.confusion_matrix, confusion_matrix_path)
-    write_summary_files(dataset, metrics_df, top_terms, output_dir, smoke_test=smoke_test)
+    write_summary_files(dataset, metrics_df, top_terms, output_dir, smoke_test=smoke_test, implementation_note=implementation_note)
 
     return {
         "summary": output_dir / "summary.txt",
@@ -493,6 +674,9 @@ def run(smoke_test: bool = False) -> dict[str, Path]:
         "classification_report": classification_report_path,
         "confusion_matrix": confusion_matrix_path,
         "top_terms": top_terms_path,
+        "transformer_metrics": transformer_metrics_path,
+        "confidence_distribution": confidence_distribution_path,
+        "misclassified_examples": misclassified_examples_path,
     }
 
 

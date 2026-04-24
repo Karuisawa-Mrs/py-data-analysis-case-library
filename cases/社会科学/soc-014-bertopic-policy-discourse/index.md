@@ -31,6 +31,9 @@ expected_artifacts:
   - "outputs/topic_document_map.csv"
   - "outputs/topic_terms.csv"
   - "outputs/topic_prevalence.png"
+  - "outputs/topic_embeddings_2d.csv"
+  - "outputs/topic_hierarchy.json"
+  - "outputs/intertopic_distance_map.html"
 validation_scope:
   - "结构完整性校验"
   - "脚本 smoke test"

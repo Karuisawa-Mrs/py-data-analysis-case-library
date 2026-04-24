@@ -22,4 +22,9 @@ dependencies = [
   "pysal",
   "pyyaml",
   "pytest",
+  "arch",
+  "bertopic",
+  "datasets",
+  "transformers",
+  "sentence-transformers",
 ]

@@ -106,6 +106,20 @@ python scripts/check_notebook_sync.py --template-only
 pip install esda libpysal spreg
 ```
 
+### Conda 兼容环境与重依赖方法
+主仓库依赖仍由 `pyproject.toml` 管理；Conda 只用于补足特定方法库在当前 Python 版本下不可安装或不稳定的兼容环境，不提交 conda 环境目录、lockfile 或本机路径。
+
+- 当 `econml`、`pysal`、`arch`、`bertopic`、深度学习/Transformer 等重依赖在当前解释器下安装失败时，优先创建独立 conda 环境验证对应案例。
+- 推荐环境命名格式：`case-<method>` 或 `case-<case-id>`，例如 `case-econml`。
+- 推荐创建方式：
+```bash
+conda create -n case-econml --override-channels -c conda-forge python=3.11 pip -y
+conda run -n case-econml python -m pip install econml pandas numpy scikit-learn matplotlib pyyaml
+conda run -n case-econml python scripts/run_case_smoke.py --case cases/经济金融/eco-013-double-ml-policy-heterogeneity
+```
+- 若 conda 默认源要求 ToS 且未接受，优先使用 `--override-channels -c conda-forge`，不要在自动化步骤中替用户接受默认 Anaconda channel 条款。
+- 即使用 conda 验证成功，`analysis.py` 仍必须保留可解释的 fallback/degraded path，使普通 `python scripts/run_case_smoke.py --all` 在主环境中可运行。
+
 ### CRLF 与 frontmatter 解析
 Windows 下文件可能以 `---\r\n` 开头。验证脚本已兼容 CRLF，但若自行解析 frontmatter，需同时处理 `\n---\n` 和 `\n---\r\n` 两种结束标记，否则校验静默失败。
 

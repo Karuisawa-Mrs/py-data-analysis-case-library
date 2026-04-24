@@ -96,7 +96,15 @@ def run_smoke_for_case(case_dir: Path) -> tuple[bool, list[str]]:
 
     command = [sys.executable, "analysis.py", "--smoke-test"]
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    result = subprocess.run(command, cwd=case_dir, capture_output=True, text=True, env=env)
+    result = subprocess.run(
+        command,
+        cwd=case_dir,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
     if result.returncode != 0:
         errors.append(f"smoke test failed for {case_dir}: exit code {result.returncode}")
         if result.stdout.strip():

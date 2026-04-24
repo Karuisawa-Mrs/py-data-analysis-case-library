@@ -32,6 +32,11 @@ expected_artifacts:
   - "outputs/model_comparison.csv"
   - "outputs/volatility_paths.png"
   - "outputs/residual_diagnostics.csv"
+  - "outputs/garch_summary.txt"
+  - "outputs/egarch_summary.txt"
+  - "outputs/conditional_volatility.csv"
+  - "outputs/tft_predictions.csv"
+  - "outputs/tft_attention_weights.csv"
 validation_scope:
   - "结构完整性校验"
   - "脚本 smoke test"
